@@ -1,4 +1,13 @@
 import streamlit as st
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+
+st.title("Debug Test")
+df = yf.Ticker("RELIANCE.NS").history(period="5d", interval="15m")
+df = df[["Open","High","Low","Close","Volume"]].dropna()
+st.write(f"Rows: {len(df)}")
+st.write(df.tail(10))
 import yfinance as yf
 import requests
 import pandas as pd
