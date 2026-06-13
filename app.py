@@ -7,9 +7,6 @@ from datetime import datetime
 
 st.set_page_config(page_title="SD Zone Scanner", page_icon="📊", layout="wide")
 
-# ══════════════════════════════════
-# SYMBOL LISTS
-# ══════════════════════════════════
 NIFTY100 = [
     "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
     "HINDUNILVR.NS","SBIN.NS","BHARTIARTL.NS","ITC.NS","KOTAKBANK.NS",
@@ -70,88 +67,125 @@ FETCH_MAP  = {"5m":"5m","15m":"15m","30m":"30m","75m":"15m","125m":"5m",
 RESAMP_MAP = {"75m":"75T","125m":"125T","2h":"2h","4h":"4h","5h":"5h",
               "6h":"6h","8h":"8h","10h":"10h","16h":"16h"}
 
-# ══════════════════════════════════
-# HELPERS
-# ══════════════════════════════════
-def body(r):     return abs(r["Close"]-r["Open"])
-def rng(r):      return r["High"]-r["Low"]
-def bpct(r):     return body(r)/rng(r)*100 if rng(r)!=0 else 0
-def is_bull(r):  return r["Close"]>=r["Open"]
-def bbhigh(r):   return max(r["Open"],r["Close"])
-def bblow(r):    return min(r["Open"],r["Close"])
+def body(r):    return abs(r["Close"]-r["Open"])
+def rng(r):     return r["High"]-r["Low"]
+def bpct(r):    return body(r)/rng(r)*100 if rng(r)!=0 else 0
+def is_bull(r): return r["Close"]>=r["Open"]
+def bbhigh(r):  return max(r["Open"],r["Close"])
+def bblow(r):   return min(r["Open"],r["Close"])
 
-def resample(df,rule):
+def resample(df, rule):
     return df.resample(rule).agg({"Open":"first","High":"max","Low":"min","Close":"last","Volume":"sum"}).dropna()
 
 def fetch_df(sym, tf):
     try:
         ft = FETCH_MAP.get(tf, tf)
-        pr = PERIOD_MAP.get(tf,"7d")
+        pr = PERIOD_MAP.get(tf, "7d")
         df = yf.Ticker(sym).history(period=pr, interval=ft)
         if df.empty: return None
         df = df[["Open","High","Low","Close","Volume"]].dropna()
         rs = RESAMP_MAP.get(tf)
         if rs: df = resample(df, rs)
-        return df if len(df)>=5 else None
+        return df if len(df) >= 5 else None
     except: return None
 
-def calc_entry_sl(bs, zt):
-    bbh = bbhigh(bs); bbl = bblow(bs); base_bull = is_bull(bs)
-    if zt=="DEMAND":
-        proximal = bbh if base_bull else bs["Open"]
+def calc_proximal_distal(bs, zt):
+    base_bull = is_bull(bs)
+    if zt == "DEMAND":
+        proximal = bbhigh(bs) if base_bull else bs["Open"]
         distal   = bs["Low"]
     else:
-        proximal = bbl if not base_bull else bs["Open"]
+        proximal = bblow(bs) if not base_bull else bs["Open"]
         distal   = bs["High"]
-    return round(proximal,6), round(distal,6)
+    return round(proximal, 6), round(distal, 6)
 
 def detect(df, legin_pct):
-    if len(df)<3: return None
-    best = None
-    for lg_i in [6,5,4,3]:
-        if lg_i >= len(df): continue
-        lg = df.iloc[-lg_i]
+    """
+    Correct detection using forward indexing.
+    df.iloc[0] = oldest candle
+    df.iloc[-1] = latest candle
+    Legin at lg_idx, Base(s) after, Legout(s) after base.
+    Returns LATEST pattern with most legouts.
+    """
+    if len(df) < 5: return None
+    n = len(df)
+    results = []
+
+    for lg_idx in range(0, n-3):
+        lg = df.iloc[lg_idx]
         if bpct(lg) < legin_pct: continue
-        lb = body(lg); lg_bull = is_bull(lg)
-        for bc in [1,2,3]:
-            lo1_i = lg_i - bc
-            if lo1_i < 1: break
-            bases = [df.iloc[-(lg_i-b)] for b in range(bc)]
-            if not all(body(b)<=lb*0.5 for b in bases): continue
-            lo1 = df.iloc[-lo1_i]
-            if body(lo1)<lb: continue
+        lb      = body(lg)
+        lg_bull = is_bull(lg)
+
+        for bc in [1, 2, 3]:
+            # Base candles: lg_idx+1 to lg_idx+bc
+            base_end = lg_idx + bc
+            if base_end >= n - 1: break
+
+            bases = [df.iloc[lg_idx + 1 + b] for b in range(bc)]
+            # All base candles body <= legin body * 0.5
+            if not all(body(b) <= lb * 0.5 for b in bases): continue
+
+            # First legout
+            lo1_idx = base_end + 1
+            if lo1_idx >= n: break
+            lo1 = df.iloc[lo1_idx]
+
+            # Legout1: body >= legin body, same direction
+            if body(lo1) < lb: continue
             if lg_bull and not is_bull(lo1): continue
             if not lg_bull and is_bull(lo1): continue
+
             lc = 1
-            if lo1_i>1:
-                lo2 = df.iloc[-(lo1_i-1)]
+            # Legout2: same direction only
+            if lo1_idx + 1 < n:
+                lo2 = df.iloc[lo1_idx + 1]
                 if (lg_bull and is_bull(lo2)) or (not lg_bull and not is_bull(lo2)):
                     lc = 2
-                    if lo1_i>2:
-                        lo3 = df.iloc[-(lo1_i-2)]
+                    # Legout3: same direction only
+                    if lo1_idx + 2 < n:
+                        lo3 = df.iloc[lo1_idx + 2]
                         if (lg_bull and is_bull(lo3)) or (not lg_bull and not is_bull(lo3)):
                             lc = 3
-            if lg_bull and is_bull(lo1):      pat,zt = "RBR","DEMAND"
-            elif lg_bull and not is_bull(lo1): pat,zt = "RBD","SUPPLY"
-            elif not lg_bull and not is_bull(lo1): pat,zt = "DBD","SUPPLY"
-            else:                              pat,zt = "DBR","DEMAND"
-            bs = bases[0]
-            prox, dist = calc_entry_sl(bs, zt)
+
+            # Pattern type
+            if   lg_bull and is_bull(lo1):      pat, zt = "RBR", "DEMAND"
+            elif lg_bull and not is_bull(lo1):  pat, zt = "RBD", "SUPPLY"
+            elif not lg_bull and not is_bull(lo1): pat, zt = "DBD", "SUPPLY"
+            else:                               pat, zt = "DBR", "DEMAND"
+
+            bs       = bases[0]
+            prox, dist = calc_proximal_distal(bs, zt)
             bhi = max(b["High"] for b in bases)
             blo = min(b["Low"]  for b in bases)
-            res = {"pattern":pat,"zone_type":zt,"proximal":prox,"distal":dist,
-                   "zone_high":round(bhi,4),"zone_low":round(blo,4),
-                   "base_count":bc,"legout_count":lc,
-                   "strength":"🟡 Good" if lc==1 else "🟠 Very Good" if lc==2 else "🌟 The Best",
-                   "base_color":"🟢 Green" if is_bull(bs) else "🔴 Red",
-                   "status":"✅ FRESH","legout_time":str(df.iloc[-lo1_i].name)}
-            if best is None or lc>best["legout_count"]: best=res
+
+            results.append({
+                "pattern"     : pat,
+                "zone_type"   : zt,
+                "proximal"    : prox,
+                "distal"      : dist,
+                "zone_high"   : round(bhi, 4),
+                "zone_low"    : round(blo, 4),
+                "base_count"  : bc,
+                "legout_count": lc,
+                "strength"    : "🟡 Good" if lc==1 else "🟠 Very Good" if lc==2 else "🌟 The Best",
+                "base_color"  : "🟢 Green" if is_bull(bs) else "🔴 Red",
+                "status"      : "✅ FRESH",
+                "lo1_idx"     : lo1_idx,
+                "lg_idx"      : lg_idx,
+            })
+
+    if not results: return None
+    # Keep latest pattern (highest lo1_idx), break ties by most legouts
+    results.sort(key=lambda x: (x["lo1_idx"], x["lc"]), reverse=True)
+    best = results[0]
+    best.pop("lo1_idx"); best.pop("lg_idx")
     return best
 
 def send_telegram(token, chat_id, text):
     try:
         requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                     json={"chat_id":chat_id,"text":text,"parse_mode":"HTML"},timeout=10)
+                     json={"chat_id":chat_id,"text":text,"parse_mode":"HTML"}, timeout=10)
     except: pass
 
 def tg_msg(sym, tf, p):
@@ -160,8 +194,9 @@ def tg_msg(sym, tf, p):
             f"📊 <b>{dn(sym)}</b> | ⏱ {tf}\n"
             f"💪 {p['strength']} | B:{p['base_count']} L:{p['legout_count']}\n"
             f"🎯 {p['zone_type']} | {p['status']}\n"
-            f"📍 Proximal: <b>{p['proximal']}</b>\n"
-            f"📏 Distal  : <b>{p['distal']}</b>")
+            f"🕯 Base: {p['base_color']}\n"
+            f"📍 Proximal: <b>{p['proximal']}</b>  ← Entry\n"
+            f"📏 Distal  : <b>{p['distal']}</b>    ← SL")
 
 # ══════════════════════════════════
 # UI
@@ -171,37 +206,29 @@ st.markdown("""
 .main-title{text-align:center;font-size:2.5rem;font-weight:800;
     background:linear-gradient(90deg,#00C853,#FFD600);
     -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.sub-title{text-align:center;color:#aaa;margin-bottom:1rem;}
-.metric-card{background:#1e2329;border-radius:10px;padding:12px;
-    text-align:center;border:1px solid #2d3748;}
-</style>
-""", unsafe_allow_html=True)
+.sub{text-align:center;color:#aaa;margin-bottom:1rem;}
+</style>""", unsafe_allow_html=True)
 
 st.markdown('<div class="main-title">📊 Supply & Demand Zone Scanner</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">Multi-Market | Multi-Timeframe | Telegram Alerts</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub">Multi-Market | Multi-Timeframe | Telegram Alerts</div>', unsafe_allow_html=True)
 st.markdown("---")
 
-# ── SIDEBAR ──
 with st.sidebar:
     st.header("⚙️ Settings")
     st.subheader("🔔 Telegram")
     tg_token   = st.text_input("Bot Token", type="password")
     tg_chat_id = st.text_input("Chat ID")
     send_tg    = st.checkbox("Send to Telegram", value=True)
-
     st.markdown("---")
     st.subheader("🎯 Pattern Settings")
     legin_pct = st.slider("Legin Body % (min)", 50, 95, 70)
-
     st.markdown("---")
     st.subheader("🔍 Filters")
     zone_status = st.multiselect("Zone Status", ["✅ FRESH","🔁 TESTED"], default=["✅ FRESH","🔁 TESTED"])
     zone_types  = st.multiselect("Zone Type",   ["DEMAND","SUPPLY"],     default=["DEMAND","SUPPLY"])
     strength_f  = st.multiselect("Strength",    ["🟡 Good","🟠 Very Good","🌟 The Best"], default=["🟡 Good","🟠 Very Good","🌟 The Best"])
 
-# ── MAIN PANEL ──
 col1, col2 = st.columns([1,1])
-
 with col1:
     st.subheader("📈 Select Markets")
     mkt_indian = st.checkbox("🇮🇳 Indian Stocks (Nifty 100)", value=True)
@@ -209,95 +236,78 @@ with col1:
     mkt_forex  = st.checkbox("💱 Forex (Major+Minor+Cross)",  value=False)
     mkt_comm   = st.checkbox("🏅 Commodities (Gold,Silver...)",value=False)
     mkt_crypto = st.checkbox("₿ Crypto",                      value=False)
-
     st.subheader("⏱ Timeframes")
     all_tfs = ["5m","15m","30m","75m","125m","1h","2h","4h","5h","6h","8h","10h","16h","1d","1wk"]
-    indian_tfs = ["5m","15m","75m","125m","2h","4h","1d","1wk"]
     sel_tfs = st.multiselect("Select Timeframes", all_tfs, default=["15m","1h","4h","1d"])
 
 with col2:
-    st.subheader("🔧 Custom Symbols")
+    st.subheader("✏️ Custom Symbols")
     custom_input = st.text_area("Add custom symbols (comma separated)", placeholder="AAPL, BTCUSD, EURUSD=X")
     st.subheader("📊 Scan Info")
     info_box = st.empty()
 
 st.markdown("---")
 scan_btn = st.button("🔍 Scan Now", type="primary", use_container_width=True)
-
-result_box   = st.empty()
 progress_bar = st.empty()
 status_text  = st.empty()
 
-# ══════════════════════════════════
-# SCAN
-# ══════════════════════════════════
 if scan_btn:
-    # Build symbol list
     symbols = []
     if mkt_indian: symbols += [(s,"🇮🇳 Indian") for s in NIFTY100]
-    if mkt_us:     symbols += [(s,"🇺🇸 US")     for s in US100]
-    if mkt_forex:  symbols += [(s,"💱 Forex")   for s in FOREX]
+    if mkt_us:     symbols += [(s,"🇺🇸 US")      for s in US100]
+    if mkt_forex:  symbols += [(s,"💱 Forex")    for s in FOREX]
     if mkt_comm:   symbols += [(s,"🏅 Commodity") for s in COMMODITY]
-    if mkt_crypto: symbols += [(s,"₿ Crypto")  for s in CRYPTO]
+    if mkt_crypto: symbols += [(s,"₿ Crypto")   for s in CRYPTO]
     if custom_input.strip():
         for s in custom_input.split(","):
-            s = s.strip()
+            s=s.strip()
             if s: symbols.append((s,"✏️ Custom"))
 
-    # Indian stocks use specific TFs
-    tfs_to_use = sel_tfs if sel_tfs else ["15m","1h","4h"]
+    tfs = sel_tfs if sel_tfs else ["15m","1h","4h"]
 
     if not symbols:
         st.warning("⚠️ Koi market select nahi ki!")
     else:
-        total = len(symbols) * len(tfs_to_use)
-        done  = 0
+        total   = len(symbols) * len(tfs)
+        done    = 0
         results = []
-
-        info_box.info(f"📊 Scanning {len(symbols)} symbols × {len(tfs_to_use)} timeframes = {total} combinations")
+        info_box.info(f"📊 Scanning {len(symbols)} symbols × {len(tfs)} timeframes = {total} combinations")
 
         for sym, market in symbols:
-            for tf in tfs_to_use:
+            for tf in tfs:
                 done += 1
                 pct = int(done/total*100)
                 progress_bar.progress(pct)
-                status_text.text(f"🔍 {dn(sym)} | {tf} ({done}/{total})")
-
+                status_text.text(f"🔍 Scanning {dn(sym)} | {tf} ({done}/{total})")
                 try:
                     df = fetch_df(sym, tf)
                     if df is None: continue
                     p = detect(df, legin_pct)
                     if p is None: continue
-
-                    # Apply filters
-                    if p["zone_type"]  not in zone_types:  continue
-                    if p["strength"]   not in strength_f:  continue
-                    if p["status"]     not in zone_status:  continue
-
-                    cur_price = round(df["Close"].iloc[-1], 4)
+                    if p["zone_type"] not in zone_types: continue
+                    if p["strength"]  not in strength_f: continue
+                    if p["status"]    not in zone_status: continue
+                    cur = round(df["Close"].iloc[-1], 4)
                     results.append({
-                        "Market"      : market,
-                        "Asset"       : dn(sym),
-                        "Timeframe"   : tf,
-                        "Pattern"     : p["pattern"],
-                        "Zone Type"   : p["zone_type"],
-                        "Strength"    : p["strength"],
-                        "Base Count"  : p["base_count"],
-                        "Legout Count": p["legout_count"],
-                        "Base Color"  : p["base_color"],
-                        "Status"      : p["status"],
-                        "Proximal"    : p["proximal"],
-                        "Distal"      : p["distal"],
-                        "Current Price": cur_price,
+                        "Market"       : market,
+                        "Asset"        : dn(sym),
+                        "Timeframe"    : tf,
+                        "Pattern"      : p["pattern"],
+                        "Zone Type"    : p["zone_type"],
+                        "Strength"     : p["strength"],
+                        "Base Count"   : p["base_count"],
+                        "Legout Count" : p["legout_count"],
+                        "Base Color"   : p["base_color"],
+                        "Status"       : p["status"],
+                        "Proximal"     : p["proximal"],
+                        "Distal"       : p["distal"],
+                        "Current Price": cur,
                     })
-
                     if send_tg and tg_token and tg_chat_id:
                         send_telegram(tg_token, tg_chat_id, tg_msg(sym, tf, p))
                         time.sleep(0.3)
-
-                except Exception as e:
-                    pass
-                time.sleep(0.2)
+                except: pass
+                time.sleep(0.15)
 
         progress_bar.empty()
         status_text.empty()
@@ -307,32 +317,23 @@ if scan_btn:
             st.success(f"✅ Scan Complete! {len(results)} zones found!")
             st.markdown("### 📋 Zone Results")
 
-            # Color rows
             def color_row(row):
-                if row["Zone Type"] == "DEMAND":
-                    return ["background-color:#1a3a2a"]*len(row)
-                else:
-                    return ["background-color:#3a1a1a"]*len(row)
+                c = "background-color:#1a3a2a" if row["Zone Type"]=="DEMAND" else "background-color:#3a1a1a"
+                return [c]*len(row)
 
-            st.dataframe(
-                df_res.style.apply(color_row, axis=1),
-                use_container_width=True, height=500
-            )
+            st.dataframe(df_res.style.apply(color_row,axis=1), use_container_width=True, height=500)
 
-            # Summary
             st.markdown("### 📊 Summary")
             c1,c2,c3,c4 = st.columns(4)
             c1.metric("Total Zones",   len(results))
-            c2.metric("Demand Zones",  len([r for r in results if r["Zone Type"]=="DEMAND"]))
-            c3.metric("Supply Zones",  len([r for r in results if r["Zone Type"]=="SUPPLY"]))
+            c2.metric("🟢 Demand",     len([r for r in results if r["Zone Type"]=="DEMAND"]))
+            c3.metric("🔴 Supply",     len([r for r in results if r["Zone Type"]=="SUPPLY"]))
             c4.metric("🌟 Best Zones", len([r for r in results if r["Strength"]=="🌟 The Best"]))
 
-            # Download
             csv = df_res.to_csv(index=False)
-            st.download_button("⬇️ Download Results CSV", csv, "sd_zones.csv", "text/csv", use_container_width=True)
-
+            st.download_button("⬇️ Download CSV", csv, "sd_zones.csv", "text/csv", use_container_width=True)
         else:
-            st.warning("⚠️ Koi zone nahi mila! Filters change karo ya aur symbols add karo.")
+            st.warning("⚠️ Koi zone nahi mila! Filters loose karo ya timeframes badlo.")
 
 st.markdown("---")
-st.caption("📊 Supply & Demand Zone Scanner | Free Forever | No TradingView Premium Needed")
+st.caption("📊 SD Zone Scanner | Free Forever | No TradingView Premium Needed")
