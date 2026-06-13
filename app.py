@@ -126,7 +126,7 @@ def detect(df, legin_pct):
             lo1_idx = base_end + 1
             if lo1_idx >= n: break
             lo1 = df.iloc[lo1_idx]
-            if body(lo1) < lb: continue
+            if body(lo1) < lb * 0.5: continue
             if lg_bull and not is_bull(lo1): continue
             if not lg_bull and is_bull(lo1): continue
             lc = 1
