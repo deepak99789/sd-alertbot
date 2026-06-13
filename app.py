@@ -1,18 +1,8 @@
 import streamlit as st
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-
-st.title("Debug Test")
-df = yf.Ticker("RELIANCE.NS").history(period="5d", interval="15m")
-df = df[["Open","High","Low","Close","Volume"]].dropna()
-st.write(f"Rows: {len(df)}")
-st.write(df.tail(10))
 import yfinance as yf
 import requests
 import pandas as pd
 import time
-from datetime import datetime
 
 st.set_page_config(page_title="SD Zone Scanner", page_icon="📊", layout="wide")
 
@@ -65,50 +55,63 @@ NAME_MAP = {
     "^NSEI":"NIFTY50","^BSESN":"SENSEX","SPY":"SP500","QQQ":"NASDAQ",
     "DIA":"DOW","IWM":"RUSSELL"
 }
-def dn(s): return NAME_MAP.get(s, s.replace(".NS","").replace("=X","").replace("-USD","USD").replace("=F",""))
+def dn(s):
+    return NAME_MAP.get(s, s.replace(".NS","").replace("=X","").replace("-USD","USD").replace("=F",""))
 
-PERIOD_MAP = {"5m":"1d","15m":"2d","30m":"5d","75m":"5d","125m":"5d",
-              "1h":"7d","2h":"10d","4h":"15d","5h":"20d","6h":"20d",
-              "8h":"30d","10h":"30d","16h":"40d","1d":"60d","1wk":"1y"}
-FETCH_MAP  = {"5m":"5m","15m":"15m","30m":"30m","75m":"15m","125m":"5m",
-              "1h":"1h","2h":"1h","4h":"1h","5h":"1h","6h":"1h",
-              "8h":"1h","10h":"1h","16h":"1h","1d":"1d","1wk":"1wk"}
-RESAMP_MAP = {"75m":"75T","125m":"125T","2h":"2h","4h":"4h","5h":"5h",
-              "6h":"6h","8h":"8h","10h":"10h","16h":"16h"}
+PERIOD_MAP = {
+    "5m":"1d","15m":"2d","30m":"5d","75m":"5d","125m":"5d",
+    "1h":"7d","2h":"10d","4h":"15d","5h":"20d","6h":"20d",
+    "8h":"30d","10h":"30d","16h":"40d","1d":"60d","1wk":"1y"
+}
+FETCH_MAP = {
+    "5m":"5m","15m":"15m","30m":"30m","75m":"15m","125m":"5m",
+    "1h":"1h","2h":"1h","4h":"1h","5h":"1h","6h":"1h",
+    "8h":"1h","10h":"1h","16h":"1h","1d":"1d","1wk":"1wk"
+}
+RESAMP_MAP = {
+    "75m":"75T","125m":"125T","2h":"2h","4h":"4h","5h":"5h",
+    "6h":"6h","8h":"8h","10h":"10h","16h":"16h"
+}
 
-def body(r):    return abs(r["Close"]-r["Open"])
-def rng(r):     return r["High"]-r["Low"]
-def bpct(r):    return body(r)/rng(r)*100 if rng(r)!=0 else 0
-def is_bull(r): return r["Close"]>=r["Open"]
-def bbhigh(r):  return max(r["Open"],r["Close"])
-def bblow(r):   return min(r["Open"],r["Close"])
+def body(r):
+    return abs(r["Close"] - r["Open"])
 
-def resample(df, rule):
-    return df.resample(rule).agg({"Open":"first","High":"max","Low":"min","Close":"last","Volume":"sum"}).dropna()
+def rng(r):
+    return r["High"] - r["Low"]
+
+def bpct(r):
+    return body(r) / rng(r) * 100 if rng(r) != 0 else 0
+
+def is_bull(r):
+    return r["Close"] >= r["Open"]
+
+def bbhigh(r):
+    return max(r["Open"], r["Close"])
+
+def bblow(r):
+    return min(r["Open"], r["Close"])
+
+def resample_df(df, rule):
+    return df.resample(rule).agg({
+        "Open":"first","High":"max","Low":"min","Close":"last","Volume":"sum"
+    }).dropna()
 
 def fetch_df(sym, tf):
     try:
         ft = FETCH_MAP.get(tf, tf)
         pr = PERIOD_MAP.get(tf, "7d")
         df = yf.Ticker(sym).history(period=pr, interval=ft)
-        if df.empty: return None
+        if df.empty:
+            return None
         df = df[["Open","High","Low","Close","Volume"]].dropna()
         rs = RESAMP_MAP.get(tf)
-        if rs: df = resample(df, rs)
+        if rs:
+            df = resample_df(df, rs)
         return df if len(df) >= 5 else None
-    except: return None
+    except:
+        return None
 
 def calc_proximal_distal(bs, zt):
-    def debug_detect(df, legin_pct):
-    n = len(df)
-    start = max(0, n-100)
-    legins_found = []
-    for lg_idx in range(start, n-3):
-        lg = df.iloc[lg_idx]
-        p = bpct(lg)
-        if p >= legin_pct:
-            legins_found.append(f"idx={lg_idx} bpct={p:.1f}% bull={is_bull(lg)}")
-    return legins_found
     base_bull = is_bull(bs)
     if zt == "DEMAND":
         proximal = bbhigh(bs) if base_bull else bs["Open"]
@@ -119,26 +122,36 @@ def calc_proximal_distal(bs, zt):
     return round(proximal, 6), round(distal, 6)
 
 def detect(df, legin_pct):
-    if len(df) < 5: return None
+    if len(df) < 5:
+        return None
     n = len(df)
     results = []
-    start = max(0, n - 50)
+    start = max(0, n - 100)
     for lg_idx in range(start, n - 3):
         lg = df.iloc[lg_idx]
-        if bpct(lg) < legin_pct: continue
-        lb      = body(lg)
+        if bpct(lg) < legin_pct:
+            continue
+        lb = body(lg)
+        if lb == 0:
+            continue
         lg_bull = is_bull(lg)
         for bc in [1, 2, 3]:
             base_end = lg_idx + bc
-            if base_end >= n - 1: break
+            if base_end >= n - 1:
+                break
             bases = [df.iloc[lg_idx + 1 + b] for b in range(bc)]
-            if not all(body(b) <= lb * 0.5 for b in bases): continue
+            if not all(body(b) <= lb * 0.5 for b in bases):
+                continue
             lo1_idx = base_end + 1
-            if lo1_idx >= n: break
+            if lo1_idx >= n:
+                break
             lo1 = df.iloc[lo1_idx]
-            if body(lo1) < lb * 0.5: continue
-            if lg_bull and not is_bull(lo1): continue
-            if not lg_bull and is_bull(lo1): continue
+            if body(lo1) < lb * 0.5:
+                continue
+            if lg_bull and not is_bull(lo1):
+                continue
+            if not lg_bull and is_bull(lo1):
+                continue
             lc = 1
             if lo1_idx + 1 < n:
                 lo2 = df.iloc[lo1_idx + 1]
@@ -148,14 +161,18 @@ def detect(df, legin_pct):
                         lo3 = df.iloc[lo1_idx + 2]
                         if (lg_bull and is_bull(lo3)) or (not lg_bull and not is_bull(lo3)):
                             lc = 3
-            if   lg_bull and is_bull(lo1):         pat, zt = "RBR", "DEMAND"
-            elif lg_bull and not is_bull(lo1):     pat, zt = "RBD", "SUPPLY"
-            elif not lg_bull and not is_bull(lo1): pat, zt = "DBD", "SUPPLY"
-            else:                                  pat, zt = "DBR", "DEMAND"
+            if lg_bull and is_bull(lo1):
+                pat, zt = "RBR", "DEMAND"
+            elif lg_bull and not is_bull(lo1):
+                pat, zt = "RBD", "SUPPLY"
+            elif not lg_bull and not is_bull(lo1):
+                pat, zt = "DBD", "SUPPLY"
+            else:
+                pat, zt = "DBR", "DEMAND"
             bs = bases[0]
             prox, dist = calc_proximal_distal(bs, zt)
             bhi = max(b["High"] for b in bases)
-            blo = min(b["Low"]  for b in bases)
+            blo = min(b["Low"] for b in bases)
             results.append({
                 "pattern"     : pat,
                 "zone_type"   : zt,
@@ -170,7 +187,8 @@ def detect(df, legin_pct):
                 "status"      : "✅ FRESH",
                 "lo1_idx"     : lo1_idx,
             })
-    if not results: return None
+    if not results:
+        return None
     results.sort(key=lambda x: (x["lo1_idx"], x["lc"]), reverse=True)
     best = results[0]
     best.pop("lo1_idx")
@@ -178,23 +196,26 @@ def detect(df, legin_pct):
 
 def send_telegram(token, chat_id, text):
     try:
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                     json={"chat_id":chat_id,"text":text,"parse_mode":"HTML"}, timeout=10)
-    except: pass
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10
+        )
+    except:
+        pass
 
 def tg_msg(sym, tf, p):
-    e = "🟢" if p["zone_type"]=="DEMAND" else "🔴"
-    return (f"{e} <b>{p['pattern']} Pattern!</b>\n"
-            f"📊 <b>{dn(sym)}</b> | ⏱ {tf}\n"
-            f"💪 {p['strength']} | B:{p['base_count']} L:{p['legout_count']}\n"
-            f"🎯 {p['zone_type']} | {p['status']}\n"
-            f"🕯 Base: {p['base_color']}\n"
-            f"📍 Proximal: <b>{p['proximal']}</b>  ← Entry\n"
-            f"📏 Distal  : <b>{p['distal']}</b>    ← SL")
+    e = "🟢" if p["zone_type"] == "DEMAND" else "🔴"
+    return (
+        f"{e} <b>{p['pattern']} Pattern!</b>\n"
+        f"📊 <b>{dn(sym)}</b> | ⏱ {tf}\n"
+        f"💪 {p['strength']} | B:{p['base_count']} L:{p['legout_count']}\n"
+        f"🎯 {p['zone_type']} | {p['status']}\n"
+        f"🕯 Base: {p['base_color']}\n"
+        f"📍 Proximal: <b>{p['proximal']}</b>  ← Entry\n"
+        f"📏 Distal  : <b>{p['distal']}</b>    ← SL"
+    )
 
-# ══════════════════════════════════
-# UI
-# ══════════════════════════════════
 st.markdown("""
 <style>
 .main-title{text-align:center;font-size:2.5rem;font-weight:800;
@@ -222,13 +243,13 @@ with st.sidebar:
     zone_types  = st.multiselect("Zone Type",   ["DEMAND","SUPPLY"],     default=["DEMAND","SUPPLY"])
     strength_f  = st.multiselect("Strength",    ["🟡 Good","🟠 Very Good","🌟 The Best"], default=["🟡 Good","🟠 Very Good","🌟 The Best"])
 
-col1, col2 = st.columns([1,1])
+col1, col2 = st.columns([1, 1])
 with col1:
     st.subheader("📈 Select Markets")
     mkt_indian = st.checkbox("🇮🇳 Indian Stocks (Nifty 100)", value=True)
     mkt_us     = st.checkbox("🇺🇸 US Stocks (Top 100)",       value=False)
     mkt_forex  = st.checkbox("💱 Forex (Major+Minor+Cross)",  value=False)
-    mkt_comm   = st.checkbox("🏅 Commodities (Gold,Silver...)",value=False)
+    mkt_comm   = st.checkbox("🏅 Commodities (Gold,Silver...)", value=False)
     mkt_crypto = st.checkbox("₿ Crypto",                      value=False)
     st.subheader("⏱ Timeframes")
     all_tfs = ["5m","15m","30m","75m","125m","1h","2h","4h","5h","6h","8h","10h","16h","1d","1wk"]
@@ -241,30 +262,24 @@ with col2:
     info_box = st.empty()
 
 st.markdown("---")
-scan_btn = st.button("🔍 Scan Now", type="primary", use_container_width=True)
+scan_btn     = st.button("🔍 Scan Now", type="primary", use_container_width=True)
 progress_bar = st.empty()
 status_text  = st.empty()
 
 if scan_btn:
-    if scan_btn:
-    df_test = fetch_df("RELIANCE.NS", "15m")
-    if df_test is not None:
-        st.write(f"Rows: {len(df_test)}")
-        legins = debug_detect(df_test, legin_pct)
-        st.write(f"Legins found: {len(legins)}")
-        st.write(legins[:10])
     symbols = []
-    if mkt_indian: symbols += [(s,"🇮🇳 Indian") for s in NIFTY100]
-    if mkt_us:     symbols += [(s,"🇺🇸 US")      for s in US100]
-    if mkt_forex:  symbols += [(s,"💱 Forex")    for s in FOREX]
-    if mkt_comm:   symbols += [(s,"🏅 Commodity") for s in COMMODITY]
-    if mkt_crypto: symbols += [(s,"₿ Crypto")   for s in CRYPTO]
+    if mkt_indian: symbols += [(s, "🇮🇳 Indian") for s in NIFTY100]
+    if mkt_us:     symbols += [(s, "🇺🇸 US")      for s in US100]
+    if mkt_forex:  symbols += [(s, "💱 Forex")    for s in FOREX]
+    if mkt_comm:   symbols += [(s, "🏅 Commodity") for s in COMMODITY]
+    if mkt_crypto: symbols += [(s, "₿ Crypto")   for s in CRYPTO]
     if custom_input.strip():
         for s in custom_input.split(","):
-            s=s.strip()
-            if s: symbols.append((s,"✏️ Custom"))
+            s = s.strip()
+            if s:
+                symbols.append((s, "✏️ Custom"))
 
-    tfs = sel_tfs if sel_tfs else ["15m","1h","4h"]
+    tfs = sel_tfs if sel_tfs else ["15m", "1h", "4h"]
 
     if not symbols:
         st.warning("⚠️ Koi market select nahi ki!")
@@ -277,17 +292,22 @@ if scan_btn:
         for sym, market in symbols:
             for tf in tfs:
                 done += 1
-                pct = int(done/total*100)
+                pct = int(done / total * 100)
                 progress_bar.progress(pct)
                 status_text.text(f"🔍 Scanning {dn(sym)} | {tf} ({done}/{total})")
                 try:
                     df = fetch_df(sym, tf)
-                    if df is None: continue
+                    if df is None:
+                        continue
                     p = detect(df, legin_pct)
-                    if p is None: continue
-                    if p["zone_type"] not in zone_types: continue
-                    if p["strength"]  not in strength_f: continue
-                    if p["status"]    not in zone_status: continue
+                    if p is None:
+                        continue
+                    if p["zone_type"] not in zone_types:
+                        continue
+                    if p["strength"] not in strength_f:
+                        continue
+                    if p["status"] not in zone_status:
+                        continue
                     cur = round(df["Close"].iloc[-1], 4)
                     results.append({
                         "Market"       : market,
@@ -307,8 +327,9 @@ if scan_btn:
                     if send_tg and tg_token and tg_chat_id:
                         send_telegram(tg_token, tg_chat_id, tg_msg(sym, tf, p))
                         time.sleep(0.3)
-                except: pass
-                time.sleep(0.15)
+                except:
+                    pass
+                time.sleep(0.1)
 
         progress_bar.empty()
         status_text.empty()
@@ -319,17 +340,17 @@ if scan_btn:
             st.markdown("### 📋 Zone Results")
 
             def color_row(row):
-                c = "background-color:#1a3a2a" if row["Zone Type"]=="DEMAND" else "background-color:#3a1a1a"
-                return [c]*len(row)
+                c = "background-color:#1a3a2a" if row["Zone Type"] == "DEMAND" else "background-color:#3a1a1a"
+                return [c] * len(row)
 
-            st.dataframe(df_res.style.apply(color_row,axis=1), use_container_width=True, height=500)
+            st.dataframe(df_res.style.apply(color_row, axis=1), use_container_width=True, height=500)
 
             st.markdown("### 📊 Summary")
-            c1,c2,c3,c4 = st.columns(4)
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("Total Zones",   len(results))
-            c2.metric("🟢 Demand",     len([r for r in results if r["Zone Type"]=="DEMAND"]))
-            c3.metric("🔴 Supply",     len([r for r in results if r["Zone Type"]=="SUPPLY"]))
-            c4.metric("🌟 Best Zones", len([r for r in results if r["Strength"]=="🌟 The Best"]))
+            c2.metric("🟢 Demand",     len([r for r in results if r["Zone Type"] == "DEMAND"]))
+            c3.metric("🔴 Supply",     len([r for r in results if r["Zone Type"] == "SUPPLY"]))
+            c4.metric("🌟 Best Zones", len([r for r in results if r["Strength"] == "🌟 The Best"]))
 
             csv = df_res.to_csv(index=False)
             st.download_button("⬇️ Download CSV", csv, "sd_zones.csv", "text/csv", use_container_width=True)
