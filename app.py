@@ -4,228 +4,335 @@ import requests
 import pandas as pd
 import time
 from datetime import datetime
-import threading
 
-# ── Page Config ──
-st.set_page_config(page_title="SD Alert Bot", page_icon="📊", layout="centered")
+st.set_page_config(page_title="SD Zone Scanner", page_icon="📊", layout="wide")
 
-# ── Sidebar Settings ──
-st.sidebar.title("⚙️ Bot Settings")
-TELEGRAM_TOKEN   = st.sidebar.text_input("Telegram Bot Token", type="password")
-TELEGRAM_CHAT_ID = st.sidebar.text_input("Telegram Chat ID")
+# ══════════════════════════════════
+# SYMBOL LISTS
+# ══════════════════════════════════
+NIFTY100 = [
+    "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
+    "HINDUNILVR.NS","SBIN.NS","BHARTIARTL.NS","ITC.NS","KOTAKBANK.NS",
+    "LT.NS","AXISBANK.NS","ASIANPAINT.NS","MARUTI.NS","SUNPHARMA.NS",
+    "TITAN.NS","ULTRACEMCO.NS","WIPRO.NS","NESTLEIND.NS","BAJFINANCE.NS",
+    "HCLTECH.NS","POWERGRID.NS","NTPC.NS","TECHM.NS","ONGC.NS",
+    "TATAMOTORS.NS","ADANIENT.NS","ADANIPORTS.NS","BAJAJFINSV.NS","COALINDIA.NS",
+    "JSWSTEEL.NS","GRASIM.NS","DIVISLAB.NS","DRREDDY.NS","EICHERMOT.NS",
+    "CIPLA.NS","BPCL.NS","TATACONSUM.NS","BRITANNIA.NS","APOLLOHOSP.NS",
+    "HEROMOTOCO.NS","HINDALCO.NS","INDUSINDBK.NS","SBILIFE.NS","HDFCLIFE.NS",
+    "BAJAJ-AUTO.NS","TATASTEEL.NS","UPL.NS","SHREECEM.NS","PIDILITIND.NS",
+    "DMART.NS","HAVELLS.NS","BERGEPAINT.NS","DABUR.NS","MARICO.NS",
+    "MCDOWELL-N.NS","COLPAL.NS","SIEMENS.NS","ADANIGREEN.NS","ADANITRANS.NS",
+    "BOSCHLTD.NS","ICICIGI.NS","ICICIPRULI.NS","GODREJCP.NS","PAGEIND.NS",
+    "TORNTPHARM.NS","LUPIN.NS","BIOCON.NS","AUROPHARMA.NS","CONCOR.NS",
+    "NMDC.NS","VEDL.NS","SAIL.NS","INDUSTOWER.NS","DLF.NS",
+    "AMBUJACEM.NS","ACC.NS","BANKBARODA.NS","PNB.NS","CANBK.NS",
+    "FEDERALBNK.NS","IDFCFIRSTB.NS","PERSISTENT.NS","MPHASIS.NS","COFORGE.NS",
+    "LTIM.NS","OFSS.NS","ZOMATO.NS","NYKAA.NS","POLICYBZR.NS",
+    "IRCTC.NS","CHOLAFIN.NS","MUTHOOTFIN.NS","BAJAJHLDNG.NS","MOTHERSON.NS",
+    "ASHOKLEY.NS","TVSMOTOR.NS","BALKRISIND.NS","JUBLFOOD.NS","^NSEI","^BSESN"
+]
+US100 = [
+    "AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA","AVGO","COST","NFLX",
+    "AMD","PEP","ADBE","QCOM","CSCO","TXN","AMAT","INTU","ISRG","AMGN",
+    "MU","LRCX","KLAC","REGN","PANW","ADI","SNPS","CDNS","MRVL","CRWD",
+    "FTNT","ORLY","ADP","MNST","CTAS","PAYX","MELI","WDAY","ODFL","FAST",
+    "ROST","BIIB","IDXX","TEAM","CPRT","EA","ZS","DDOG","NET","SNOW",
+    "PLTR","COIN","RBLX","ABNB","DASH","UBER","SHOP","SQ","PYPL","INTC",
+    "ORCL","CRM","NOW","VEEV","HUBS","MDB","SPY","QQQ","DIA","IWM"
+]
+FOREX = [
+    "EURUSD=X","GBPUSD=X","USDJPY=X","USDCHF=X","AUDUSD=X","USDCAD=X","NZDUSD=X",
+    "EURGBP=X","EURJPY=X","EURCHF=X","EURAUD=X","EURCAD=X","EURNZD=X",
+    "GBPJPY=X","GBPCHF=X","GBPAUD=X","GBPCAD=X","GBPNZD=X",
+    "AUDJPY=X","AUDCHF=X","AUDCAD=X","AUDNZD=X",
+    "CADJPY=X","CADCHF=X","NZDJPY=X","NZDCHF=X","NZDCAD=X","CHFJPY=X",
+    "USDINR=X","USDSGD=X","USDMXN=X","USDZAR=X"
+]
+COMMODITY = ["GC=F","SI=F","CL=F","BZ=F","NG=F","HG=F"]
+CRYPTO    = ["BTC-USD","ETH-USD","BNB-USD","SOL-USD","XRP-USD"]
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("📈 Symbols")
-crypto_input = st.sidebar.text_area("Crypto (one per line)", "BTC/USDT\nETH/USDT\nSOL/USDT")
-stock_input  = st.sidebar.text_area("Stocks/Index (one per line)", "RELIANCE.NS\nTCS.NS\n^NSEI")
-forex_input  = st.sidebar.text_area("Forex (one per line)", "EURUSD=X\nGBPUSD=X")
+NAME_MAP = {
+    "GC=F":"XAUUSD","SI=F":"XAGUSD","CL=F":"WTI_OIL","BZ=F":"BRENT",
+    "NG=F":"NAT_GAS","HG=F":"COPPER","BTC-USD":"BTCUSD","ETH-USD":"ETHUSD",
+    "BNB-USD":"BNBUSD","SOL-USD":"SOLUSD","XRP-USD":"XRPUSD",
+    "^NSEI":"NIFTY50","^BSESN":"SENSEX","SPY":"SP500","QQQ":"NASDAQ",
+    "DIA":"DOW","IWM":"RUSSELL"
+}
+def dn(s): return NAME_MAP.get(s, s.replace(".NS","").replace("=X","").replace("-USD","USD").replace("=F",""))
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("⏱ Timeframes")
-timeframes = st.sidebar.multiselect(
-    "Select Timeframes",
-    ["15m","30m","1h","2h","4h","1d","1wk"],
-    default=["15m","1h","4h","1d"]
-)
+PERIOD_MAP = {"5m":"1d","15m":"2d","30m":"5d","75m":"5d","125m":"5d",
+              "1h":"7d","2h":"10d","4h":"15d","5h":"20d","6h":"20d",
+              "8h":"30d","10h":"30d","16h":"40d","1d":"60d","1wk":"1y"}
+FETCH_MAP  = {"5m":"5m","15m":"15m","30m":"30m","75m":"15m","125m":"5m",
+              "1h":"1h","2h":"1h","4h":"1h","5h":"1h","6h":"1h",
+              "8h":"1h","10h":"1h","16h":"1h","1d":"1d","1wk":"1wk"}
+RESAMP_MAP = {"75m":"75T","125m":"125T","2h":"2h","4h":"4h","5h":"5h",
+              "6h":"6h","8h":"8h","10h":"10h","16h":"16h"}
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 Pattern Settings")
-legin_pct  = st.sidebar.slider("Legin Body % (min)", 50, 95, 70)
-base_pct   = st.sidebar.slider("Base Body % (max)",  10, 70, 50)
-legout_mul = st.sidebar.slider("Legout Multiplier",  0.5, 3.0, 1.0, 0.1)
-
-# ── Main UI ──
-st.title("📊 Supply & Demand Alert Bot")
-st.markdown("**Free | No TradingView Premium | 24/7 Telegram Alerts**")
-st.markdown("---")
-
-# ── Status ──
-status_box  = st.empty()
-log_box     = st.empty()
-alert_count = st.empty()
-
-# ── Session State ──
-if "running"        not in st.session_state: st.session_state.running        = False
-if "alerted"        not in st.session_state: st.session_state.alerted        = set()
-if "active_zones"   not in st.session_state: st.session_state.active_zones   = {}
-if "logs"           not in st.session_state: st.session_state.logs           = []
-if "alert_count"    not in st.session_state: st.session_state.alert_count    = 0
-
-# ══════════════════════════════════════════
+# ══════════════════════════════════
 # HELPERS
-# ══════════════════════════════════════════
-def candle_body(row):  return abs(row["Close"] - row["Open"])
-def candle_range(row): return row["High"] - row["Low"]
-def body_pct(row):
-    r = candle_range(row)
-    return candle_body(row) / r * 100 if r != 0 else 0
-def is_bull(row): return row["Close"] >= row["Open"]
-def is_bear(row): return row["Close"] <  row["Open"]
-def bbhigh(row):  return max(row["Open"], row["Close"])
-def bblow(row):   return min(row["Open"], row["Close"])
+# ══════════════════════════════════
+def body(r):     return abs(r["Close"]-r["Open"])
+def rng(r):      return r["High"]-r["Low"]
+def bpct(r):     return body(r)/rng(r)*100 if rng(r)!=0 else 0
+def is_bull(r):  return r["Close"]>=r["Open"]
+def bbhigh(r):   return max(r["Open"],r["Close"])
+def bblow(r):    return min(r["Open"],r["Close"])
 
-def detect_patterns(df, legin_pct, base_pct, legout_mul):
-    patterns = []
-    if len(df) < 3:
-        return patterns
-    lookback = min(50, len(df) - 2)
-    for i in range(lookback, 0, -1):
-        if i - 2 < 0: continue
-        lg  = df.iloc[-i]
-        bs  = df.iloc[-(i-1)]
-        lo  = df.iloc[-(i-2)]
-        if not (body_pct(lg) >= legin_pct and body_pct(bs) < base_pct and candle_body(lo) >= candle_body(lg) * legout_mul):
-            continue
-        if   is_bull(lg) and is_bull(lo): pat, zt, ep, sl = "RBR", "DEMAND", bblow(bs),  bbhigh(bs)
-        elif is_bull(lg) and is_bear(lo): pat, zt, ep, sl = "RBD", "SUPPLY", bbhigh(bs), bblow(bs)
-        elif is_bear(lg) and is_bear(lo): pat, zt, ep, sl = "DBD", "SUPPLY", bbhigh(bs), bblow(bs)
-        elif is_bear(lg) and is_bull(lo): pat, zt, ep, sl = "DBR", "DEMAND", bblow(bs),  bbhigh(bs)
-        else: continue
-        patterns.append({"pattern": pat, "zone_type": zt, "entry": round(ep,6),
-                         "sl": round(sl,6), "zone_high": round(bs["High"],6),
-                         "zone_low": round(bs["Low"],6), "legout_time": str(lo.name)})
-    return patterns
+def resample(df,rule):
+    return df.resample(rule).agg({"Open":"first","High":"max","Low":"min","Close":"last","Volume":"sum"}).dropna()
 
-def fetch_yf(symbol, tf):
-    period_map = {"15m":"5d","30m":"10d","1h":"30d","2h":"60d","4h":"60d","1d":"1y","1wk":"5y"}
+def fetch_df(sym, tf):
     try:
-        df = yf.Ticker(symbol).history(period=period_map.get(tf,"30d"), interval=tf)
-        return df[["Open","High","Low","Close","Volume"]] if not df.empty else None
+        ft = FETCH_MAP.get(tf, tf)
+        pr = PERIOD_MAP.get(tf,"7d")
+        df = yf.Ticker(sym).history(period=pr, interval=ft)
+        if df.empty: return None
+        df = df[["Open","High","Low","Close","Volume"]].dropna()
+        rs = RESAMP_MAP.get(tf)
+        if rs: df = resample(df, rs)
+        return df if len(df)>=5 else None
     except: return None
 
-def fetch_crypto_yf(symbol, tf):
-    sym = symbol.replace("/","-")
-    return fetch_yf(sym, tf)
+def calc_entry_sl(bs, zt):
+    bbh = bbhigh(bs); bbl = bblow(bs); base_bull = is_bull(bs)
+    if zt=="DEMAND":
+        proximal = bbh if base_bull else bs["Open"]
+        distal   = bs["Low"]
+    else:
+        proximal = bbl if not base_bull else bs["Open"]
+        distal   = bs["High"]
+    return round(proximal,6), round(distal,6)
+
+def detect(df, legin_pct):
+    if len(df)<3: return None
+    best = None
+    for lg_i in [6,5,4,3]:
+        if lg_i >= len(df): continue
+        lg = df.iloc[-lg_i]
+        if bpct(lg) < legin_pct: continue
+        lb = body(lg); lg_bull = is_bull(lg)
+        for bc in [1,2,3]:
+            lo1_i = lg_i - bc
+            if lo1_i < 1: break
+            bases = [df.iloc[-(lg_i-b)] for b in range(bc)]
+            if not all(body(b)<=lb*0.5 for b in bases): continue
+            lo1 = df.iloc[-lo1_i]
+            if body(lo1)<lb: continue
+            if lg_bull and not is_bull(lo1): continue
+            if not lg_bull and is_bull(lo1): continue
+            lc = 1
+            if lo1_i>1:
+                lo2 = df.iloc[-(lo1_i-1)]
+                if (lg_bull and is_bull(lo2)) or (not lg_bull and not is_bull(lo2)):
+                    lc = 2
+                    if lo1_i>2:
+                        lo3 = df.iloc[-(lo1_i-2)]
+                        if (lg_bull and is_bull(lo3)) or (not lg_bull and not is_bull(lo3)):
+                            lc = 3
+            if lg_bull and is_bull(lo1):      pat,zt = "RBR","DEMAND"
+            elif lg_bull and not is_bull(lo1): pat,zt = "RBD","SUPPLY"
+            elif not lg_bull and not is_bull(lo1): pat,zt = "DBD","SUPPLY"
+            else:                              pat,zt = "DBR","DEMAND"
+            bs = bases[0]
+            prox, dist = calc_entry_sl(bs, zt)
+            bhi = max(b["High"] for b in bases)
+            blo = min(b["Low"]  for b in bases)
+            res = {"pattern":pat,"zone_type":zt,"proximal":prox,"distal":dist,
+                   "zone_high":round(bhi,4),"zone_low":round(blo,4),
+                   "base_count":bc,"legout_count":lc,
+                   "strength":"🟡 Good" if lc==1 else "🟠 Very Good" if lc==2 else "🌟 The Best",
+                   "base_color":"🟢 Green" if is_bull(bs) else "🔴 Red",
+                   "status":"✅ FRESH","legout_time":str(df.iloc[-lo1_i].name)}
+            if best is None or lc>best["legout_count"]: best=res
+    return best
 
 def send_telegram(token, chat_id, text):
     try:
         requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                      json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=10)
+                     json={"chat_id":chat_id,"text":text,"parse_mode":"HTML"},timeout=10)
     except: pass
 
-def pat_msg(symbol, tf, p):
+def tg_msg(sym, tf, p):
     e = "🟢" if p["zone_type"]=="DEMAND" else "🔴"
-    return (f"{e} <b>{p['pattern']} Pattern Formed!</b>\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"📊 Symbol    : <b>{symbol}</b>\n"
-            f"⏱ Timeframe : <b>{tf}</b>\n"
-            f"🎯 Zone      : <b>{p['zone_type']}</b>\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"📍 Entry     : <b>{p['entry']}</b>\n"
-            f"🛑 SL        : <b>{p['sl']}</b>\n"
-            f"📦 Zone      : {p['zone_low']} — {p['zone_high']}")
+    return (f"{e} <b>{p['pattern']} Pattern!</b>\n"
+            f"📊 <b>{dn(sym)}</b> | ⏱ {tf}\n"
+            f"💪 {p['strength']} | B:{p['base_count']} L:{p['legout_count']}\n"
+            f"🎯 {p['zone_type']} | {p['status']}\n"
+            f"📍 Proximal: <b>{p['proximal']}</b>\n"
+            f"📏 Distal  : <b>{p['distal']}</b>")
 
-def retest_msg(symbol, tf, p, price):
-    e = "🟢" if p["zone_type"]=="DEMAND" else "🔴"
-    return (f"⚡ <b>{p['pattern']} RETEST!</b>\n"
-            f"📊 {symbol} | {tf}\n"
-            f"💰 Price : <b>{price}</b>\n"
-            f"📍 Entry : <b>{p['entry']}</b>\n"
-            f"🛑 SL    : <b>{p['sl']}</b>\n"
-            f"{e} Price entered <b>{p['zone_type']}</b> zone!")
+# ══════════════════════════════════
+# UI
+# ══════════════════════════════════
+st.markdown("""
+<style>
+.main-title{text-align:center;font-size:2.5rem;font-weight:800;
+    background:linear-gradient(90deg,#00C853,#FFD600);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.sub-title{text-align:center;color:#aaa;margin-bottom:1rem;}
+.metric-card{background:#1e2329;border-radius:10px;padding:12px;
+    text-align:center;border:1px solid #2d3748;}
+</style>
+""", unsafe_allow_html=True)
 
-def sl_msg(symbol, tf, p, price):
-    return (f"❌ <b>{p['pattern']} Zone INVALIDATED</b>\n"
-            f"📊 {symbol} | {tf}\n"
-            f"💰 Price : <b>{price}</b>\n"
-            f"🛑 SL Hit: <b>{p['sl']}</b>")
+st.markdown('<div class="main-title">📊 Supply & Demand Zone Scanner</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">Multi-Market | Multi-Timeframe | Telegram Alerts</div>', unsafe_allow_html=True)
+st.markdown("---")
 
-def add_log(msg):
-    ts = datetime.now().strftime("%H:%M:%S")
-    st.session_state.logs.insert(0, f"[{ts}] {msg}")
-    if len(st.session_state.logs) > 50:
-        st.session_state.logs = st.session_state.logs[:50]
+# ── SIDEBAR ──
+with st.sidebar:
+    st.header("⚙️ Settings")
+    st.subheader("🔔 Telegram")
+    tg_token   = st.text_input("Bot Token", type="password")
+    tg_chat_id = st.text_input("Chat ID")
+    send_tg    = st.checkbox("Send to Telegram", value=True)
 
-# ══════════════════════════════════════════
-# SCAN FUNCTION
-# ══════════════════════════════════════════
-def scan_all(token, chat_id, crypto_syms, stock_syms, forex_syms, tfs, lp, bp, lm):
-    all_markets = [(crypto_syms,"crypto"),(stock_syms,"stock"),(forex_syms,"forex")]
-    for symbols, mtype in all_markets:
-        for symbol in symbols:
-            if not symbol.strip(): continue
-            for tf in tfs:
-                try:
-                    df = fetch_crypto_yf(symbol, tf) if mtype=="crypto" else fetch_yf(symbol, tf)
-                    if df is None or len(df) < 5: continue
-                    patterns = detect_patterns(df, lp, bp, lm)
-                    cur = round(df["Close"].iloc[-1], 6)
-                    for p in patterns:
-                        pk = f"{symbol}_{tf}_{p['legout_time']}_{p['pattern']}"
-                        zk = f"{symbol}_{tf}_{p['legout_time']}"
-                        if pk not in st.session_state.alerted:
-                            st.session_state.alerted.add(pk)
-                            st.session_state.active_zones[zk] = {**p, "symbol": symbol, "tf": tf}
-                            send_telegram(token, chat_id, pat_msg(symbol, tf, p))
-                            st.session_state.alert_count += 1
-                            add_log(f"✅ {p['pattern']} {symbol} {tf}")
-                        if zk in st.session_state.active_zones:
-                            z   = st.session_state.active_zones[zk]
-                            bull = z["zone_type"] == "DEMAND"
-                            slk  = zk + "_sl"
-                            rtk  = zk + "_retest"
-                            if (bull and cur < z["sl"]) or (not bull and cur > z["sl"]):
-                                if slk not in st.session_state.alerted:
-                                    st.session_state.alerted.add(slk)
-                                    send_telegram(token, chat_id, sl_msg(symbol, tf, z, cur))
-                                    del st.session_state.active_zones[zk]
-                                    add_log(f"❌ SL Hit {symbol} {tf}")
-                            elif rtk not in st.session_state.alerted:
-                                if (bull and cur <= z["entry"]) or (not bull and cur >= z["entry"]):
-                                    st.session_state.alerted.add(rtk)
-                                    send_telegram(token, chat_id, retest_msg(symbol, tf, z, cur))
-                                    add_log(f"⚡ Retest {symbol} {tf}")
-                    time.sleep(0.3)
-                except Exception as e:
-                    add_log(f"⚠️ Error {symbol} {tf}: {str(e)[:40]}")
+    st.markdown("---")
+    st.subheader("🎯 Pattern Settings")
+    legin_pct = st.slider("Legin Body % (min)", 50, 95, 70)
 
-# ══════════════════════════════════════════
-# START / STOP BUTTONS
-# ══════════════════════════════════════════
-col1, col2 = st.columns(2)
-start_btn = col1.button("▶️ Start Bot",  type="primary", use_container_width=True)
-stop_btn  = col2.button("⏹ Stop Bot",   type="secondary", use_container_width=True)
+    st.markdown("---")
+    st.subheader("🔍 Filters")
+    zone_status = st.multiselect("Zone Status", ["✅ FRESH","🔁 TESTED"], default=["✅ FRESH","🔁 TESTED"])
+    zone_types  = st.multiselect("Zone Type",   ["DEMAND","SUPPLY"],     default=["DEMAND","SUPPLY"])
+    strength_f  = st.multiselect("Strength",    ["🟡 Good","🟠 Very Good","🌟 The Best"], default=["🟡 Good","🟠 Very Good","🌟 The Best"])
 
-if start_btn:
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        st.error("❌ Pehle Telegram Token aur Chat ID daalo (sidebar mein)!")
-    elif not timeframes:
-        st.error("❌ Kam se kam ek timeframe select karo!")
-    else:
-        st.session_state.running = True
-        send_telegram(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
-                      "🤖 <b>SD Alert Bot Started!</b>\nMonitoring all markets... 📊")
-        add_log("🚀 Bot started!")
+# ── MAIN PANEL ──
+col1, col2 = st.columns([1,1])
 
-if stop_btn:
-    st.session_state.running = False
-    add_log("⏹ Bot stopped.")
+with col1:
+    st.subheader("📈 Select Markets")
+    mkt_indian = st.checkbox("🇮🇳 Indian Stocks (Nifty 100)", value=True)
+    mkt_us     = st.checkbox("🇺🇸 US Stocks (Top 100)",       value=False)
+    mkt_forex  = st.checkbox("💱 Forex (Major+Minor+Cross)",  value=False)
+    mkt_comm   = st.checkbox("🏅 Commodities (Gold,Silver...)",value=False)
+    mkt_crypto = st.checkbox("₿ Crypto",                      value=False)
 
-# ══════════════════════════════════════════
-# BOT LOOP
-# ══════════════════════════════════════════
-if st.session_state.running:
-    status_box.success("🟢 Bot Running... Telegram pe alerts aa rahe hain!")
-    alert_count.metric("Total Alerts Sent", st.session_state.alert_count)
+    st.subheader("⏱ Timeframes")
+    all_tfs = ["5m","15m","30m","75m","125m","1h","2h","4h","5h","6h","8h","10h","16h","1d","1wk"]
+    indian_tfs = ["5m","15m","75m","125m","2h","4h","1d","1wk"]
+    sel_tfs = st.multiselect("Select Timeframes", all_tfs, default=["15m","1h","4h","1d"])
 
-    crypto_syms = [s.strip() for s in crypto_input.split("\n") if s.strip()]
-    stock_syms  = [s.strip() for s in stock_input.split("\n")  if s.strip()]
-    forex_syms  = [s.strip() for s in forex_input.split("\n")  if s.strip()]
-
-    with st.spinner("🔍 Scanning markets..."):
-        scan_all(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
-                 crypto_syms, stock_syms, forex_syms,
-                 timeframes, legin_pct, base_pct, legout_mul)
-
-    log_box.text_area("📋 Activity Log", "\n".join(st.session_state.logs), height=300)
-    alert_count.metric("Total Alerts Sent", st.session_state.alert_count)
-    time.sleep(60)
-    st.rerun()
-
-else:
-    status_box.warning("🔴 Bot Stopped. Start karo!")
-    if st.session_state.logs:
-        log_box.text_area("📋 Activity Log", "\n".join(st.session_state.logs), height=300)
+with col2:
+    st.subheader("🔧 Custom Symbols")
+    custom_input = st.text_area("Add custom symbols (comma separated)", placeholder="AAPL, BTCUSD, EURUSD=X")
+    st.subheader("📊 Scan Info")
+    info_box = st.empty()
 
 st.markdown("---")
-st.caption("Made with ❤️ | Supply & Demand Zone Bot | Free Forever")
+scan_btn = st.button("🔍 Scan Now", type="primary", use_container_width=True)
+
+result_box   = st.empty()
+progress_bar = st.empty()
+status_text  = st.empty()
+
+# ══════════════════════════════════
+# SCAN
+# ══════════════════════════════════
+if scan_btn:
+    # Build symbol list
+    symbols = []
+    if mkt_indian: symbols += [(s,"🇮🇳 Indian") for s in NIFTY100]
+    if mkt_us:     symbols += [(s,"🇺🇸 US")     for s in US100]
+    if mkt_forex:  symbols += [(s,"💱 Forex")   for s in FOREX]
+    if mkt_comm:   symbols += [(s,"🏅 Commodity") for s in COMMODITY]
+    if mkt_crypto: symbols += [(s,"₿ Crypto")  for s in CRYPTO]
+    if custom_input.strip():
+        for s in custom_input.split(","):
+            s = s.strip()
+            if s: symbols.append((s,"✏️ Custom"))
+
+    # Indian stocks use specific TFs
+    tfs_to_use = sel_tfs if sel_tfs else ["15m","1h","4h"]
+
+    if not symbols:
+        st.warning("⚠️ Koi market select nahi ki!")
+    else:
+        total = len(symbols) * len(tfs_to_use)
+        done  = 0
+        results = []
+
+        info_box.info(f"📊 Scanning {len(symbols)} symbols × {len(tfs_to_use)} timeframes = {total} combinations")
+
+        for sym, market in symbols:
+            for tf in tfs_to_use:
+                done += 1
+                pct = int(done/total*100)
+                progress_bar.progress(pct)
+                status_text.text(f"🔍 {dn(sym)} | {tf} ({done}/{total})")
+
+                try:
+                    df = fetch_df(sym, tf)
+                    if df is None: continue
+                    p = detect(df, legin_pct)
+                    if p is None: continue
+
+                    # Apply filters
+                    if p["zone_type"]  not in zone_types:  continue
+                    if p["strength"]   not in strength_f:  continue
+                    if p["status"]     not in zone_status:  continue
+
+                    cur_price = round(df["Close"].iloc[-1], 4)
+                    results.append({
+                        "Market"      : market,
+                        "Asset"       : dn(sym),
+                        "Timeframe"   : tf,
+                        "Pattern"     : p["pattern"],
+                        "Zone Type"   : p["zone_type"],
+                        "Strength"    : p["strength"],
+                        "Base Count"  : p["base_count"],
+                        "Legout Count": p["legout_count"],
+                        "Base Color"  : p["base_color"],
+                        "Status"      : p["status"],
+                        "Proximal"    : p["proximal"],
+                        "Distal"      : p["distal"],
+                        "Current Price": cur_price,
+                    })
+
+                    if send_tg and tg_token and tg_chat_id:
+                        send_telegram(tg_token, tg_chat_id, tg_msg(sym, tf, p))
+                        time.sleep(0.3)
+
+                except Exception as e:
+                    pass
+                time.sleep(0.2)
+
+        progress_bar.empty()
+        status_text.empty()
+
+        if results:
+            df_res = pd.DataFrame(results)
+            st.success(f"✅ Scan Complete! {len(results)} zones found!")
+            st.markdown("### 📋 Zone Results")
+
+            # Color rows
+            def color_row(row):
+                if row["Zone Type"] == "DEMAND":
+                    return ["background-color:#1a3a2a"]*len(row)
+                else:
+                    return ["background-color:#3a1a1a"]*len(row)
+
+            st.dataframe(
+                df_res.style.apply(color_row, axis=1),
+                use_container_width=True, height=500
+            )
+
+            # Summary
+            st.markdown("### 📊 Summary")
+            c1,c2,c3,c4 = st.columns(4)
+            c1.metric("Total Zones",   len(results))
+            c2.metric("Demand Zones",  len([r for r in results if r["Zone Type"]=="DEMAND"]))
+            c3.metric("Supply Zones",  len([r for r in results if r["Zone Type"]=="SUPPLY"]))
+            c4.metric("🌟 Best Zones", len([r for r in results if r["Strength"]=="🌟 The Best"]))
+
+            # Download
+            csv = df_res.to_csv(index=False)
+            st.download_button("⬇️ Download Results CSV", csv, "sd_zones.csv", "text/csv", use_container_width=True)
+
+        else:
+            st.warning("⚠️ Koi zone nahi mila! Filters change karo ya aur symbols add karo.")
+
+st.markdown("---")
+st.caption("📊 Supply & Demand Zone Scanner | Free Forever | No TradingView Premium Needed")
