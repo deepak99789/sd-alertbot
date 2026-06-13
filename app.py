@@ -99,6 +99,16 @@ def fetch_df(sym, tf):
     except: return None
 
 def calc_proximal_distal(bs, zt):
+    def debug_detect(df, legin_pct):
+    n = len(df)
+    start = max(0, n-100)
+    legins_found = []
+    for lg_idx in range(start, n-3):
+        lg = df.iloc[lg_idx]
+        p = bpct(lg)
+        if p >= legin_pct:
+            legins_found.append(f"idx={lg_idx} bpct={p:.1f}% bull={is_bull(lg)}")
+    return legins_found
     base_bull = is_bull(bs)
     if zt == "DEMAND":
         proximal = bbhigh(bs) if base_bull else bs["Open"]
@@ -236,6 +246,13 @@ progress_bar = st.empty()
 status_text  = st.empty()
 
 if scan_btn:
+    if scan_btn:
+    df_test = fetch_df("RELIANCE.NS", "15m")
+    if df_test is not None:
+        st.write(f"Rows: {len(df_test)}")
+        legins = debug_detect(df_test, legin_pct)
+        st.write(f"Legins found: {len(legins)}")
+        st.write(legins[:10])
     symbols = []
     if mkt_indian: symbols += [(s,"🇮🇳 Indian") for s in NIFTY100]
     if mkt_us:     symbols += [(s,"🇺🇸 US")      for s in US100]
