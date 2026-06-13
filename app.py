@@ -100,65 +100,43 @@ def calc_proximal_distal(bs, zt):
     return round(proximal, 6), round(distal, 6)
 
 def detect(df, legin_pct):
-    """
-    Correct detection using forward indexing.
-    df.iloc[0] = oldest candle
-    df.iloc[-1] = latest candle
-    Legin at lg_idx, Base(s) after, Legout(s) after base.
-    Returns LATEST pattern with most legouts.
-    """
     if len(df) < 5: return None
     n = len(df)
     results = []
-
-    for lg_idx in range(0, n-3):
+    start = max(0, n - 50)
+    for lg_idx in range(start, n - 3):
         lg = df.iloc[lg_idx]
         if bpct(lg) < legin_pct: continue
         lb      = body(lg)
         lg_bull = is_bull(lg)
-
         for bc in [1, 2, 3]:
-            # Base candles: lg_idx+1 to lg_idx+bc
             base_end = lg_idx + bc
             if base_end >= n - 1: break
-
             bases = [df.iloc[lg_idx + 1 + b] for b in range(bc)]
-            # All base candles body <= legin body * 0.5
             if not all(body(b) <= lb * 0.5 for b in bases): continue
-
-            # First legout
             lo1_idx = base_end + 1
             if lo1_idx >= n: break
             lo1 = df.iloc[lo1_idx]
-
-            # Legout1: body >= legin body, same direction
             if body(lo1) < lb: continue
             if lg_bull and not is_bull(lo1): continue
             if not lg_bull and is_bull(lo1): continue
-
             lc = 1
-            # Legout2: same direction only
             if lo1_idx + 1 < n:
                 lo2 = df.iloc[lo1_idx + 1]
                 if (lg_bull and is_bull(lo2)) or (not lg_bull and not is_bull(lo2)):
                     lc = 2
-                    # Legout3: same direction only
                     if lo1_idx + 2 < n:
                         lo3 = df.iloc[lo1_idx + 2]
                         if (lg_bull and is_bull(lo3)) or (not lg_bull and not is_bull(lo3)):
                             lc = 3
-
-            # Pattern type
-            if   lg_bull and is_bull(lo1):      pat, zt = "RBR", "DEMAND"
-            elif lg_bull and not is_bull(lo1):  pat, zt = "RBD", "SUPPLY"
+            if   lg_bull and is_bull(lo1):         pat, zt = "RBR", "DEMAND"
+            elif lg_bull and not is_bull(lo1):     pat, zt = "RBD", "SUPPLY"
             elif not lg_bull and not is_bull(lo1): pat, zt = "DBD", "SUPPLY"
-            else:                               pat, zt = "DBR", "DEMAND"
-
-            bs       = bases[0]
+            else:                                  pat, zt = "DBR", "DEMAND"
+            bs = bases[0]
             prox, dist = calc_proximal_distal(bs, zt)
             bhi = max(b["High"] for b in bases)
             blo = min(b["Low"]  for b in bases)
-
             results.append({
                 "pattern"     : pat,
                 "zone_type"   : zt,
@@ -172,14 +150,11 @@ def detect(df, legin_pct):
                 "base_color"  : "🟢 Green" if is_bull(bs) else "🔴 Red",
                 "status"      : "✅ FRESH",
                 "lo1_idx"     : lo1_idx,
-                "lg_idx"      : lg_idx,
             })
-
     if not results: return None
-    # Keep latest pattern (highest lo1_idx), break ties by most legouts
     results.sort(key=lambda x: (x["lo1_idx"], x["lc"]), reverse=True)
     best = results[0]
-    best.pop("lo1_idx"); best.pop("lg_idx")
+    best.pop("lo1_idx")
     return best
 
 def send_telegram(token, chat_id, text):
