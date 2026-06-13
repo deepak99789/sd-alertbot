@@ -1,8 +1,34 @@
 import streamlit as st
 import yfinance as yf
-import requests
 import pandas as pd
-import time
+
+st.title("Debug")
+
+df = yf.Ticker("RELIANCE.NS").history(period="2d", interval="15m")
+df = df[["Open","High","Low","Close","Volume"]].dropna()
+n = len(df)
+st.write(f"Total rows: {n}")
+
+def body(r): return abs(r["Close"]-r["Open"])
+def rng(r): return r["High"]-r["Low"]
+def bpct(r): return body(r)/rng(r)*100 if rng(r)!=0 else 0
+def is_bull(r): return r["Close"]>=r["Open"]
+
+legins = []
+for i in range(n):
+    row = df.iloc[i]
+    p = bpct(row)
+    b = body(row)
+    legins.append({"idx":i, "bpct":round(p,1), "body":round(b,4), "bull":is_bull(row)})
+
+import pandas as pd
+ldf = pd.DataFrame(legins)
+st.write("All candles body%:")
+st.dataframe(ldf)
+
+found = ldf[ldf["bpct"]>=70]
+st.write(f"Legins (bpct>=70): {len(found)}")
+st.dataframe(found)
 
 st.set_page_config(page_title="SD Zone Scanner", page_icon="📊", layout="wide")
 
